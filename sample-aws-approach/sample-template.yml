@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'raw-data-files-bucket'
+
+  GlueCrawler:
+    Type: 'AWS::Glue::Crawler'
+    Properties:
+      Name: 'glue-crawler'
+      Role: 'arn:aws:iam::YOUR_ACCOUNT_ID:role/service-role/AWSGlueServiceRole-DefaultRole'
+      DatabaseName: 'data-catalog-db'
+      Targets:
+        S3Targets:
+          - Path: 's3://raw-data-files-bucket/'
+
+  GlueDatabase:
+    Type: 'AWS::Glue::Database'
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: 'data-catalog-db'
+
+  GlueJob:
+    Type: 'AWS::Glue::Job'
+    Properties:
+      Name: 'scheduled-glue-job'
+      Role: 'arn:aws:iam::YOUR_ACCOUNT_ID:role/service-role/AWSGlueServiceRole-DefaultRole'
+      Command:
+        Name: 'glueetl'
+        ScriptLocation: 's3://path-to-your-script/glue-job-script.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--TempDir': 's3://aws-glue-temporary-dir/'
+
+  WeatherRDSDB:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBInstanceIdentifier: 'weather-rds-db'
+      DBInstanceClass: 'db.t3.micro'
+      Engine: 'mysql'
+      MasterUsername: 'admin'
+      MasterUserPassword: 'yourpassword'
+      AllocatedStorage: '20'
+
+  APIGateway:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Name: 'WeatherAPI'
+      Description: 'API Gateway for Weather Service'
+      
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'lambda-execution-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:*'
+                  - 's3:*'
+                  - 'rds:*'
+                  - 'glue:*'
+                Resource: '*'
+
+  LambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'weather-lambda'
+      Handler: 'handler.lambda_handler_query_weather_data'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: 'your-lambda-code-bucket'
+        S3Key: 'lambda-code.zip'
+      Runtime: 'python3.8'
+      
+  APIGatewayMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      AuthorizationType: 'NONE'
+      HttpMethod: 'GET'
+      ResourceId:
+        Fn::GetAtt:
+          - APIGateway
+          - 'RootResourceId'
+      RestApiId: !Ref APIGateway
+      Integration:
+        IntegrationHttpMethod: 'POST'
+        Type: 'AWS_PROXY'
+        Uri:
+          Fn::Sub: 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations'
+
+  CloudWatchLogs:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: '/aws/lambda/weather-lambda'
+      RetentionInDays: 14
+
+Outputs:
+  S3BucketName:
+    Value: !Ref S3Bucket
+    Export:
+      Name: S3BucketName
+
+  GlueCrawlerName:
+    Value: !Ref GlueCrawler
+    Export:
+      Name: GlueCrawlerName
+
+  GlueJobName:
+    Value: !Ref GlueJob
+    Export:
+      Name: GlueJobName
+
+  RDSInstanceEndpoint:
+    Value: !GetAtt WeatherRDSDB.Endpoint.Address
+    Export:
+      Name: RDSInstanceEndpoint
+
+  APIGatewayURL:
+    Value:
+      Fn::Sub: 'https://${APIGateway}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: APIGatewayURL
+
+  LambdaFunctionName:
+    Value: !Ref LambdaFunction
+    Export:
+      Name: LambdaFunctionName
