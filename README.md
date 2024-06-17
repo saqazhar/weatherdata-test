@@ -201,7 +201,7 @@ pytest test.py
 ---
 
 
-## Screen Shots
+## Screenshot
 
 
 ![Swagger](swagger.png)
